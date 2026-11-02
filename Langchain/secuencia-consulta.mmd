@@ -1,0 +1,89 @@
+%% ===== Flujo 1 · Respuesta basada en la documentación (camino principal) =====
+sequenceDiagram
+    participant E as Empleado
+    participant F as Front<br/>(App Runner + Cognito)
+    participant A as API<br/>(API Gateway + WAF)
+    participant B as Backend LangChain<br/>(Lambda)
+    participant M as Memoria de sesión<br/>(DynamoDB)
+    participant C as Caché de términos<br/>(ElastiCache)
+    participant G as Guardarraíles<br/>(Bedrock)
+    participant L1 as LLM reformulación<br/>(Bedrock)
+    participant EM as Embeddings<br/>(Bedrock)
+    participant V as Base vectorial<br/>(OpenSearch Service)
+    participant L2 as LLM respuesta<br/>(Bedrock)
+    E->>F: 1. Inicia sesión y escribe la pregunta
+    F->>A: 2. Pregunta autenticada
+    A->>B: 2. Pasa el límite de peticiones
+    B->>M: 3. Lee la memoria de la sesión
+    M-->>B: Últimos intercambios y documentos
+    B->>C: 4. Busca términos de RRHH
+    C-->>B: Sinónimos, siglas y términos
+    alt Flujo 1 · Respuesta basada en la documentación (circuito de IA y recuperación)
+    B->>G: 5. Pregunta + contexto (entrada)
+    G->>L1: 6. Pregunta validada
+    L1-->>B: Consulta reformulada
+    B->>EM: 7. Consulta reformulada
+    EM-->>B: Vector de la consulta
+    B->>V: 8. Busca fragmentos similares
+    V-->>B: 9. Fragmentos relevantes
+    B->>L2: 10. Pregunta + fragmentos + historial
+    L2->>G: 11. Respuesta (salida)
+    G-->>B: 12. Respuesta validada con citas
+    end
+    B->>M: 13. Guarda pregunta, respuesta y documentos
+    B->>C: 13. Guarda términos de la sesión
+    B-->>A: 14. Respuesta
+    A-->>F: 14. Respuesta
+    F-->>E: 14. Respuesta con citas a los documentos
+
+%% ===== Flujo 2 · Entrada bloqueada por el guardarraíl =====
+sequenceDiagram
+    participant E as Empleado
+    participant F as Front<br/>(App Runner + Cognito)
+    participant A as API<br/>(API Gateway + WAF)
+    participant B as Backend LangChain<br/>(Lambda)
+    participant M as Memoria de sesión<br/>(DynamoDB)
+    participant C as Caché de términos<br/>(ElastiCache)
+    participant G as Guardarraíles<br/>(Bedrock)
+    E->>F: 1. Inicia sesión y escribe la pregunta
+    F->>A: 2. Pregunta autenticada
+    A->>B: 2. Pasa el límite de peticiones
+    B->>M: 3. Lee la memoria de la sesión
+    M-->>B: Últimos intercambios y documentos
+    B->>C: 4. Busca términos de RRHH
+    C-->>B: Sinónimos, siglas y términos
+    alt Flujo 2 · Entrada bloqueada (tema ajeno a RRHH, prompt injection, cambio de rol, lenguaje ofensivo)
+    B->>G: 5. Pregunta + contexto (entrada)
+    G-->>B: Bloqueada
+    end
+    B-->>A: 14. Respuesta fija
+    A-->>F: 14. Respuesta fija
+    F-->>E: 14. «No tengo información acerca de ello,<br/>soy un asistente de RRHH»
+
+%% ===== Flujo 3 · Sin fragmentos relevantes en la base vectorial =====
+sequenceDiagram
+    participant E as Empleado
+    participant F as Front<br/>(App Runner + Cognito)
+    participant A as API<br/>(API Gateway + WAF)
+    participant B as Backend LangChain<br/>(Lambda)
+    participant G as Guardarraíles<br/>(Bedrock)
+    participant L1 as LLM reformulación<br/>(Bedrock)
+    participant EM as Embeddings<br/>(Bedrock)
+    participant V as Base vectorial<br/>(OpenSearch Service)
+    E->>F: 1. Inicia sesión y escribe la pregunta
+    F->>A: 2. Pregunta autenticada
+    A->>B: 2. Pasa el límite de peticiones
+    Note over B: 3-4. Lee memoria y caché<br/>(igual que el flujo 1)
+    B->>G: 5. Pregunta + contexto (entrada)
+    G->>L1: 6. Pregunta validada
+    L1-->>B: Consulta reformulada
+    B->>EM: 7. Consulta reformulada
+    EM-->>B: Vector de la consulta
+    B->>V: 8. Busca fragmentos similares
+    alt Flujo 3 · Sin fragmentos relevantes (la pregunta no está en la documentación)
+    V-->>B: 9. Fragmentos por debajo del umbral
+    end
+    B-->>A: 14. Respuesta fija
+    A-->>F: 14. Respuesta fija
+    F-->>E: 14. «No tengo información acerca de ello,<br/>soy un asistente de RRHH»
+
