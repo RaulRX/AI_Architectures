@@ -1,0 +1,30 @@
+%% ===== Flujo A · Subida de documentos (horario laboral) =====
+sequenceDiagram
+    participant AD as Administrador RRHH
+    participant S as Documentos RRHH<br/>(S3, versionado)
+    alt Flujo A · Subida de documentos (horario laboral)
+    AD->>S: I1. Sube o actualiza manuales y políticas
+    S-->>AD: Documento guardado (nueva versión)
+    end
+
+%% ===== Flujo B · Procesamiento programado (fuera del horario laboral) =====
+sequenceDiagram
+    participant S as Documentos RRHH<br/>(S3, versionado)
+    participant P as Programador<br/>(EventBridge Scheduler)
+    participant I as Ingesta<br/>(Lambda)
+    participant EM as Embeddings<br/>(Bedrock)
+    participant V as Base vectorial<br/>(OpenSearch Service)
+    participant C as Caché de términos<br/>(ElastiCache)
+    alt Flujo B · Procesamiento programado (fuera del horario laboral)
+    P->>I: I2. Lanza el proceso de ingesta
+    I->>S: I2. Lee los documentos nuevos o modificados
+    S-->>I: Documentos
+    loop Por cada documento
+    I->>I: Divide en fragmentos
+    I->>EM: I3. Fragmentos
+    EM-->>I: Un vector por fragmento
+    I->>V: I4. Guarda vectores + texto + referencia
+    I->>C: I5. Actualiza el glosario común de RRHH
+    end
+    end
+
