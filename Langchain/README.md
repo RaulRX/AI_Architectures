@@ -25,6 +25,7 @@
 > | Icono de permisos + código | Rol y política IAM de esa conexión (tabla de abajo) |
 > | Icono pequeño sobre un componente | Servicio de seguridad u operación que lo protege u observa |
 > | Línea continua / discontinua | Llamada o envío de datos / respuesta o retorno |
+> | (TOON) / (JSON) en una etiqueta | Formato de lo que viaja: TOON en lo que entra al LLM, JSON en lo que sale y en lo que se guarda |
 
 ### Roles y políticas IAM
 
@@ -53,6 +54,18 @@ Cada icono de permisos del diagrama lleva uno de estos códigos:
 - **CloudWatch:** logs, métricas y alarmas de Lambdas y API Gateway, sin datos personales.
 - **CloudTrail:** auditoría de los cambios en los documentos de RRHH.
 
+### Lambdas
+
+Hay **2 Lambdas**, una por flujo. Las dos se ejecutan en la **subred privada de aplicación** y cada una tiene su propio rol IAM.
+
+| Lambda | Flujo | Rol IAM | Para qué sirve |
+|---|---|---|---|
+| Backend LangChain | Consulta | Backend de consulta (RC) | Recibe la pregunta desde API Gateway y orquesta la cadena RAG con memoria: lee la memoria de sesión y la caché de términos, pasa la entrada por el guardarraíl, monta los prompts en TOON, llama al LLM de reformulación, a los embeddings y a la base vectorial, aplica el control de relevancia, llama al LLM de respuesta, valida su JSON, guarda memoria y términos y devuelve la respuesta o la respuesta fija. |
+| Ingesta | Ingesta (programada) | Ingesta (RI) | La lanza EventBridge Scheduler fuera del horario laboral: lee de S3 los documentos nuevos o modificados, los divide en fragmentos, obtiene un vector por fragmento, los indexa en OpenSearch con la referencia al documento y actualiza el glosario común de la caché. |
+
+- **Consulta en una sola Lambda:** es una cadena corta y secuencial por pregunta. Repartirla en varias Lambdas añadiría saltos de red, arranques en frío y latencia sin beneficio, porque sus pasos no escalan por separado.
+- **Ingesta en una sola Lambda, sin orquestador:** el lote es pequeño (documentos de RRHH), siempre sigue los mismos pasos y no tiene ramas ni revisión humana. *Revisar si* el volumen crece hasta acercarse al límite de duración de una ejecución de Lambda (15 minutos): entonces se separaría en una Lambda que lista los documentos y otra que procesa cada uno en paralelo desde una cola.
+
 
 ### Flujos funcionales (secuencia)
 
@@ -71,14 +84,14 @@ Cada icono de permisos del diagrama lleva uno de estos códigos:
 | 3 | Memoria de sesión (DynamoDB) | El backend recupera los últimos intercambios y los documentos ya consultados. |
 | 4 | Caché de términos (ElastiCache) | Aporta sinónimos y siglas de RRHH y los términos ya usados en la sesión. |
 | 5 | Guardarraíl de entrada | Bloquea temas ajenos a RRHH, prompt injection, cambio de rol y lenguaje ofensivo. Si bloquea, respuesta fija (paso 14). |
-| 6 | LLM de reformulación | Forma la consulta al RAG con la pregunta y el contexto relevante de la conversación. |
+| 6 | LLM de reformulación | Forma la consulta al RAG con la pregunta y el contexto relevante de la conversación (historial y términos, en TOON). Devuelve la consulta como texto. |
 | 7 | Embeddings | Convierte la consulta en un vector (mismo modelo que en la ingesta). |
 | 8 | Base vectorial (OpenSearch) | Busca los fragmentos más relevantes, priorizando los documentos ya consultados. |
 | 9 | Control de relevancia | Si ningún fragmento es suficientemente relevante, respuesta fija (paso 14). |
-| 10 | LLM de respuesta | Responde solo con los fragmentos, con instrucciones de sistema restrictivas, y cita el documento. |
+| 10 | LLM de respuesta | Responde solo con los fragmentos (en TOON, con el documento y la sección de cada uno), con instrucciones de sistema restrictivas, y devuelve un JSON con la respuesta y los documentos citados. |
 | 11 | Guardarraíl de salida | Bloquea respuestas de cambio de rol, contenido no apoyado en los documentos y datos personales. |
-| 12 | Backend LangChain | Recibe la respuesta validada. |
-| 13 | Memoria + caché de términos | Guarda pregunta, respuesta, documentos usados y términos de la sesión. |
+| 12 | Backend LangChain | Recibe la respuesta validada y comprueba el esquema del JSON y que cada cita corresponda a un fragmento recuperado. Si falla, respuesta fija (paso 14). |
+| 13 | Memoria + caché de términos | Guarda pregunta, respuesta, documentos usados y términos de la sesión (en JSON). |
 | 14 | Front | Devuelve la respuesta con las citas, o "No tengo información acerca de ello, soy un asistente de RRHH". |
 
 ### Pasos de la ingesta
@@ -88,7 +101,7 @@ Cada icono de permisos del diagrama lleva uno de estos códigos:
 | I1 | Documentos RRHH (S3) | El administrador de RRHH sube o actualiza documentos (horario laboral). |
 | I2 | EventBridge Scheduler + Lambda de ingesta | Fuera del horario laboral se procesan los documentos nuevos o modificados y se dividen en fragmentos. |
 | I3 | Embeddings | Un vector por fragmento. |
-| I4 | Base vectorial (OpenSearch) | Guarda vectores, texto y referencia al documento para poder citarlo. |
+| I4 | Base vectorial (OpenSearch) | Guarda vectores, texto y referencia al documento (en JSON) para poder citarlo. |
 | I5 | Caché de términos | Actualiza el glosario común de RRHH. |
 
 ## 3. Descripción de componentes
@@ -98,7 +111,7 @@ Cada icono de permisos del diagrama lleva uno de estos códigos:
 | Front | Interfaz de chat del empleado | AWS App Runner | Ejecuta la web en contenedor sin gestionar servidores, escala solo y se despliega desde el repositorio por CI/CD. |
 | Autenticación | Identificar al empleado con su cuenta corporativa | Amazon Cognito | Federación con el directorio corporativo y MFA; entrega tokens que valida API Gateway. |
 | API y límite de peticiones | Única entrada al backend; protección frente a avalanchas de prompts | Amazon API Gateway + AWS WAF | Autorización con Cognito, límites por usuario y reglas por tasa; separa el front del backend. |
-| Backend LangChain | Orquesta la cadena RAG con memoria (memoria, guardarraíles, LLM, recuperación) | AWS Lambda | Cada pregunta es una petición corta y sin estado; escala por petición y no cuesta fuera del horario laboral. |
+| Backend LangChain | Orquesta la cadena RAG con memoria (memoria, guardarraíles, LLM, recuperación), monta los prompts en TOON y valida la respuesta en JSON | AWS Lambda | Cada pregunta es una petición corta y sin estado; escala por petición y no cuesta fuera del horario laboral. |
 | Memoria de sesión | Últimos intercambios y documentos consultados de cada sesión | Amazon DynamoDB | Clave-valor serverless, latencia baja, caducidad automática de registros (retención corta por RGPD). |
 | Caché de términos | Glosario común de RRHH + términos de la sesión | Amazon ElastiCache (Multi-AZ) | Lecturas en memoria de muy baja latencia en cada pregunta; réplica en otra AZ. |
 | Guardarraíles de entrada y salida | Filtrar entradas no deseadas y respuestas fuera de rol o no apoyadas en documentos | Amazon Bedrock Guardrails | Temas denegados, filtro de palabras, detección de ataques de prompt, comprobación de grounding y datos personales, gestionados. |
@@ -116,6 +129,7 @@ Cada icono de permisos del diagrama lleva uno de estos códigos:
 ## 4. Decisiones clave
 
 - **Solo documentación de RRHH:** guardarraíl de entrada, control de relevancia, instrucciones de sistema restrictivas y guardarraíl de salida. Si no hay información, respuesta fija indicando que es un asistente de RRHH.
+- **TOON en lo que entra al LLM, JSON en lo que sale y en el almacenamiento:** el backend escribe en TOON el contexto de los prompts (historial y términos para la reformulación; fragmentos con sus metadatos e historial para la respuesta). Son listas de registros con los mismos campos, y TOON las expresa con menos tokens que JSON, lo que abarata cada llamada. Lo que sale del LLM y hay que validar (la respuesta con sus citas) va en JSON con esquema, y la memoria, la caché y la base vectorial guardan JSON. TOON es solo el formato del prompt: se genera al montarlo y no se almacena. La consulta reformulada es texto y no necesita formato.
 - **Reformulación antes de buscar:** la consulta al RAG se forma con lo último relevante de la conversación, no con el historial completo.
 - **Memoria por sesión y de corta duración**, guardando qué documentos se usaron para enlazar el hilo con ellos.
 - **Caché de términos en dos niveles:** glosario común de RRHH (se actualiza en la ingesta) y términos de la sesión (caducan con ella).
