@@ -3,7 +3,7 @@ sequenceDiagram
     participant E as Empleado
     participant F as Front<br/>(App Runner + Cognito)
     participant A as API<br/>(API Gateway + WAF)
-    participant B as Backend LangChain<br/>(Lambda)
+    participant B as Backend LangChain<br/>(1 Lambda)
     participant M as Memoria de sesión<br/>(DynamoDB)
     participant C as Caché de términos<br/>(ElastiCache)
     participant G as Guardarraíles<br/>(Bedrock)
@@ -19,18 +19,19 @@ sequenceDiagram
     B->>C: 4. Busca términos de RRHH
     C-->>B: Sinónimos, siglas y términos
     alt Flujo 1 · Respuesta basada en la documentación (circuito de IA y recuperación)
-    B->>G: 5. Pregunta + contexto (entrada)
+    B->>G: 5. Pregunta + historial y términos en TOON (entrada)
     G->>L1: 6. Pregunta validada
     L1-->>B: Consulta reformulada
     B->>EM: 7. Consulta reformulada
     EM-->>B: Vector de la consulta
     B->>V: 8. Busca fragmentos similares
     V-->>B: 9. Fragmentos relevantes
-    B->>L2: 10. Pregunta + fragmentos + historial
-    L2->>G: 11. Respuesta (salida)
-    G-->>B: 12. Respuesta validada con citas
+    B->>L2: 10. Pregunta + fragmentos con metadatos + historial en TOON
+    L2->>G: 11. Respuesta en JSON con citas (salida)
+    G-->>B: 12. Respuesta validada
+    Note over B,C: 12. Valida el esquema JSON y que cada cita sea un<br/>fragmento recuperado. Si falla, respuesta fija (paso 14)
     end
-    B->>M: 13. Guarda pregunta, respuesta y documentos
+    B->>M: 13. Guarda pregunta, respuesta y documentos (JSON)
     B->>C: 13. Guarda términos de la sesión
     B-->>A: 14. Respuesta
     A-->>F: 14. Respuesta
@@ -41,7 +42,7 @@ sequenceDiagram
     participant E as Empleado
     participant F as Front<br/>(App Runner + Cognito)
     participant A as API<br/>(API Gateway + WAF)
-    participant B as Backend LangChain<br/>(Lambda)
+    participant B as Backend LangChain<br/>(1 Lambda)
     participant M as Memoria de sesión<br/>(DynamoDB)
     participant C as Caché de términos<br/>(ElastiCache)
     participant G as Guardarraíles<br/>(Bedrock)
@@ -53,7 +54,7 @@ sequenceDiagram
     B->>C: 4. Busca términos de RRHH
     C-->>B: Sinónimos, siglas y términos
     alt Flujo 2 · Entrada bloqueada (tema ajeno a RRHH, prompt injection, cambio de rol, lenguaje ofensivo)
-    B->>G: 5. Pregunta + contexto (entrada)
+    B->>G: 5. Pregunta + historial y términos en TOON (entrada)
     G-->>B: Bloqueada
     end
     B-->>A: 14. Respuesta fija
@@ -65,7 +66,7 @@ sequenceDiagram
     participant E as Empleado
     participant F as Front<br/>(App Runner + Cognito)
     participant A as API<br/>(API Gateway + WAF)
-    participant B as Backend LangChain<br/>(Lambda)
+    participant B as Backend LangChain<br/>(1 Lambda)
     participant G as Guardarraíles<br/>(Bedrock)
     participant L1 as LLM reformulación<br/>(Bedrock)
     participant EM as Embeddings<br/>(Bedrock)
@@ -74,7 +75,7 @@ sequenceDiagram
     F->>A: 2. Pregunta autenticada
     A->>B: 2. Pasa el límite de peticiones
     Note over B: 3-4. Lee memoria y caché<br/>(igual que el flujo 1)
-    B->>G: 5. Pregunta + contexto (entrada)
+    B->>G: 5. Pregunta + historial y términos en TOON (entrada)
     G->>L1: 6. Pregunta validada
     L1-->>B: Consulta reformulada
     B->>EM: 7. Consulta reformulada
