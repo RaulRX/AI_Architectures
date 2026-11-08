@@ -1,0 +1,119 @@
+%% ===== Flujo A · Sincronización de las fuentes =====
+sequenceDiagram
+    participant SCH as Programador<br/>(EventBridge Scheduler)
+    participant CON as Conectores (2 Lambdas)<br/>Confluence y portal
+    participant SRC as Confluence y portal web
+    participant DS as DataSync (opcional)<br/>desde el servidor
+    participant S3 as Documentos<br/>(S3 bruto y normalizado)
+    participant SF as Orquestación<br/>(Step Functions)
+    SCH->>CON: I1. Lanza la sincronización
+    CON->>SRC: I1. Pide lo nuevo o modificado (token en Secrets Manager)
+    SRC-->>CON: Contenido + datos de origen (espacio y estado en Confluence)
+    CON->>S3: I2. Guarda en bruto
+    DS->>S3: I2. Copia los PDF y .txt nuevos o modificados
+    S3->>SF: I3. Evento «documento nuevo» → inicia la ingesta del documento
+
+%% ===== Flujo B · Documento nuevo o modificado (camino principal) =====
+sequenceDiagram
+    participant SF as Orquestación<br/>(Step Functions)
+    participant S3 as Documentos<br/>(S3 bruto y normalizado)
+    participant LN as Lambda<br/>Normalización y OCR
+    participant TX as OCR<br/>(Textract)
+    participant LH as Lambda<br/>Verificar si el documento existe<br/>(Hash del documento)
+    participant REG as Registro de ingesta<br/>(DynamoDB)
+    participant LMD as Lambda<br/>Metadatos y validación
+    participant BM as Metadatos<br/>(Bedrock, modelo ligero)
+    participant LE as Lambda<br/>Chunking y embeddings
+    participant EMB as Embeddings<br/>(Bedrock, Titan)
+    participant LDJ as Lambda<br/>Duplicados y juez
+    participant OS as Índice híbrido<br/>(OpenSearch Service)
+    participant LIX as Lambda<br/>Indexación
+    SF->>LN: I4. Normaliza el documento
+    LN->>S3: Lee el bruto
+    LN->>TX: I4. OCR si el PDF está escaneado
+    TX-->>LN: Texto extraído
+    LN->>S3: Guarda el normalizado (Markdown o JSON)
+    SF->>LH: I5. Verificar si el documento existe (Hash del documento)
+    LH->>REG: Busca el hash
+    REG-->>LH: No registrado
+    SF->>LMD: I6. Metadatos
+    LMD->>BM: Documento (TOON)
+    BM-->>LMD: Metadatos en JSON
+    Note over LMD: I7. Valida el esquema. Solo Confluence:<br/>página aprobada en espacio oficial
+    SF->>LE: I8. Chunking y embeddings
+    LE->>EMB: Chunks
+    EMB-->>LE: Un vector por chunk
+    SF->>LDJ: I9. Control de duplicados
+    LDJ->>OS: k-NN con el vector de cada chunk
+    OS-->>LDJ: Banda «nuevo»
+    SF->>LIX: I10. Indexación
+    LIX->>OS: Chunks + vectores + metadatos.<br/>Versión anterior → obsoleta
+    LIX->>REG: I11. Registra documento, hash, estado y decisiones
+
+%% ===== Flujo C · Descartes sin indexar =====
+sequenceDiagram
+    participant SF as Orquestación<br/>(Step Functions)
+    participant LH as Lambda<br/>Verificar si el documento existe<br/>(Hash del documento)
+    participant LMD as Lambda<br/>Metadatos y validación
+    participant LDJ as Lambda<br/>Duplicados y juez
+    participant REG as Registro de ingesta<br/>(DynamoDB)
+    alt Hash igual al registrado
+    SF->>LH: I5. Verificar si el documento existe (Hash del documento)
+    LH->>REG: Busca el hash
+    REG-->>LH: Ya registrado: se descarta
+    else Página de Confluence no aprobada o fuera de un espacio oficial
+    SF->>LMD: I7. Validación
+    LMD->>REG: Descartada: registra el motivo
+    else Banda «duplicado» en el k-NN
+    SF->>LDJ: I9. Control de duplicados
+    LDJ->>REG: Duplicado: registra la referencia al original
+    end
+    Note over SF: La ejecución termina sin indexar
+
+%% ===== Flujo D · Zona gris: juez y revisión humana =====
+sequenceDiagram
+    participant SF as Orquestación<br/>(Step Functions)
+    participant LDJ as Lambda<br/>Duplicados y juez
+    participant OS as Índice híbrido<br/>(OpenSearch Service)
+    participant JZ as Juez<br/>(Bedrock, otro proveedor)
+    participant RH as ■ Revisión humana<br/>(otro diagrama)
+    participant LIX as Lambda<br/>Indexación
+    participant REG as Registro de ingesta<br/>(DynamoDB)
+    SF->>LDJ: I9. Control de duplicados
+    LDJ->>OS: k-NN con el vector de cada chunk
+    OS-->>LDJ: Banda «zona gris» + chunks similares
+    LDJ->>JZ: I12. Chunk nuevo + similares (TOON)
+    JZ-->>LDJ: Veredicto (repite, aporta o contradice) + confianza
+    LDJ->>JZ: I12. Misma petición reformulada
+    JZ-->>LDJ: Segundo veredicto
+    LDJ->>REG: Registra veredictos, confianza y bandas
+    alt Veredictos de acuerdo: aporta u otra versión de producto
+    SF->>LIX: I10. Indexación (igual que el flujo B)
+    else Veredictos de acuerdo: repite
+    SF->>REG: Descartado: registra el motivo
+    else Sin acuerdo, poca confianza o contradice
+    SF->>RH: I13. Pide revisión con documento, similares y veredictos
+    RH-->>SF: Decisión del revisor
+    SF->>LIX: Indexa o descarta según la decisión
+    end
+
+%% ===== Flujo E · Purga nocturna de obsoletos =====
+sequenceDiagram
+    participant SCH as Programador<br/>(EventBridge Scheduler)
+    participant SF as Orquestación<br/>(Step Functions)
+    participant LP as Lambda<br/>Purga
+    participant OS as Índice híbrido<br/>(OpenSearch Service)
+    participant RH as ■ Revisión humana<br/>(otro diagrama)
+    participant REG as Registro de ingesta<br/>(DynamoDB)
+    SCH->>SF: I14. Lanza la purga nocturna
+    SF->>LP: Lista lo obsoleto
+    LP->>OS: Busca chunks con estado obsoleto
+    OS-->>LP: Documentos obsoletos
+    SF->>RH: I14. Pide confirmación de la purga
+    RH-->>SF: Purga confirmada (o rechazada)
+    alt Confirmada
+    SF->>LP: Borra
+    LP->>OS: Elimina los chunks obsoletos
+    end
+    LP->>REG: Registra la purga y quién la confirmó
+

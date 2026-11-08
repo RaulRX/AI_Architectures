@@ -1,0 +1,105 @@
+%% ===== Flujo 1 · Respuesta con citas (camino principal) =====
+sequenceDiagram
+    participant AG as Agente de soporte N1
+    participant FW as Front web<br/>(CloudFront + Cognito)
+    participant API as API en streaming<br/>(API Gateway WebSocket + WAF)
+    participant OQ as Orquestador LangChain<br/>(Lambda)
+    participant MEM as Memoria de sesión<br/>(DynamoDB)
+    participant GE as Guardarraíl de entrada<br/>(Bedrock Guardrails)
+    participant LR as Reformulación<br/>(Bedrock, modelo ligero)
+    participant EMB as Embeddings<br/>(Bedrock, Titan)
+    participant OS as Índice híbrido<br/>(OpenSearch Service)
+    participant RR as Reranker<br/>(SageMaker)
+    participant LM as Respuesta<br/>(Bedrock, modelo intermedio)
+    participant GS as Guardarraíl de salida<br/>(Bedrock Guardrails)
+    AG->>FW: C1. Inicia sesión y escribe la pregunta
+    FW->>API: C2. Pregunta con el token de sesión
+    API->>OQ: C2. Pasa el WAF y el límite de peticiones
+    OQ->>MEM: C3. Lee el historial y la versión del producto
+    MEM-->>OQ: Historial y versión
+    OQ->>GE: C4. Pregunta (entrada)
+    GE-->>OQ: Pregunta validada
+    OQ->>LR: C5. Pregunta + historial
+    LR-->>OQ: Pregunta que se entiende sola
+    OQ->>EMB: C6. Pregunta reformulada
+    EMB-->>OQ: Vector de la pregunta
+    OQ->>OS: C7. Búsqueda BM25 + k-NN<br/>filtros: estado oficial y versión
+    OS-->>OQ: Chunks candidatos (dos listas)
+    OQ->>OQ: C8. Fusión RRF
+    OQ->>RR: C8. Pregunta + chunks fusionados
+    RR-->>OQ: Chunks reordenados con puntuación
+    Note over OQ: C9. Puntuación por encima del umbral
+    OQ->>LM: C10. Instrucciones + pregunta + chunks en TOON
+    LM-->>OQ: Respuesta con citas (documento y página)
+    OQ->>GS: C11. Respuesta (salida)
+    GS-->>OQ: Respuesta validada
+    OQ->>MEM: C12. Guarda pregunta y respuesta
+    OQ-->>API: C13. Respuesta en streaming
+    API-->>FW: C13. Respuesta en streaming
+    FW-->>AG: C13. Respuesta con citas
+    Note over OQ: C14. Log de la inferencia y métricas (CloudWatch)
+
+%% ===== Flujo 2 · Falta la versión del producto =====
+sequenceDiagram
+    participant AG as Agente de soporte N1
+    participant FW as Front web<br/>(CloudFront + Cognito)
+    participant API as API en streaming<br/>(API Gateway WebSocket + WAF)
+    participant OQ as Orquestador LangChain<br/>(Lambda)
+    participant MEM as Memoria de sesión<br/>(DynamoDB)
+    AG->>FW: C1. Inicia sesión y escribe la pregunta
+    FW->>API: C2. Pregunta con el token de sesión
+    API->>OQ: C2. Pasa el WAF y el límite de peticiones
+    OQ->>MEM: C3. Lee el historial y la versión del producto
+    alt Falta la versión del producto
+    MEM-->>OQ: Historial sin versión
+    OQ-->>API: Pregunta al agente
+    API-->>FW: Pregunta al agente
+    FW-->>AG: «¿Qué versión de Analytica Pro tiene el cliente?»
+    AG->>FW: Versión del cliente
+    FW->>API: Versión
+    API->>OQ: Versión
+    OQ->>MEM: Guarda la versión en la sesión
+    end
+    Note over OQ: Sigue en C4 (flujo 1)
+
+%% ===== Flujo 3 · Entrada bloqueada por el guardarraíl =====
+sequenceDiagram
+    participant AG as Agente de soporte N1
+    participant FW as Front web<br/>(CloudFront + Cognito)
+    participant API as API en streaming<br/>(API Gateway WebSocket + WAF)
+    participant OQ as Orquestador LangChain<br/>(Lambda)
+    participant GE as Guardarraíl de entrada<br/>(Bedrock Guardrails)
+    AG->>FW: C1. Escribe la pregunta
+    FW->>API: C2. Pregunta con el token de sesión
+    API->>OQ: C2. Pasa el WAF y el límite de peticiones
+    Note over OQ: C3. Lee historial y versión (igual que el flujo 1)
+    alt Prompt injection, fuera de tema, contenido ofensivo o datos sensibles
+    OQ->>GE: C4. Pregunta (entrada)
+    GE-->>OQ: Bloqueada
+    end
+    OQ-->>API: C13. Mensaje de bloqueo
+    API-->>FW: C13. Mensaje de bloqueo
+    FW-->>AG: C13. «No puedo atender esta petición»
+
+%% ===== Flujo 4 · Contexto vacío: sin respuesta y derivación a Nivel 2 =====
+sequenceDiagram
+    participant AG as Agente de soporte N1
+    participant FW as Front web<br/>(CloudFront + Cognito)
+    participant API as API en streaming<br/>(API Gateway WebSocket + WAF)
+    participant OQ as Orquestador LangChain<br/>(Lambda)
+    participant OS as Índice híbrido<br/>(OpenSearch Service)
+    participant RR as Reranker<br/>(SageMaker)
+    AG->>FW: C1. Escribe la pregunta
+    FW->>API: C2. Pregunta con el token de sesión
+    API->>OQ: C2. Pasa el WAF y el límite de peticiones
+    Note over OQ: C3-C6. Memoria, guardarraíl, reformulación<br/>y embedding (igual que el flujo 1)
+    OQ->>OS: C7. Búsqueda BM25 + k-NN con filtros
+    OS-->>OQ: Chunks candidatos
+    OQ->>RR: C8. Pregunta + chunks fusionados
+    alt Contexto vacío: la documentación oficial no cubre la pregunta
+    RR-->>OQ: C9. Ningún chunk supera el umbral
+    end
+    OQ-->>API: C13. Respuesta fija, sin llamar al LLM
+    API-->>FW: C13. Respuesta fija
+    FW-->>AG: C13. «No hay respuesta en la documentación oficial.<br/>Deriva el caso a Nivel 2»
+
