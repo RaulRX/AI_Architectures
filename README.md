@@ -13,3 +13,4 @@ Arquitecturas cloud con IA del módulo «Arquitecturas con IA» del Máster en I
 | Práctica | Enunciado |
 |---|---|
 | [LangChain: asistente de políticas de RRHH (AWS)](Langchain/README.md) | Ejercicio «Agentes LangChain»: agente de soporte interno que responde a los empleados sobre las políticas de RRHH de Acme Solutions usando solo la documentación. |
+| [RAG: asistente de soporte técnico de Nivel 1 (AWS)](RAG/README.md) | Ejercicio «RAG Framework»: asistente para el soporte técnico de Nivel 1 de Innovatech Solutions que responde solo con la documentación oficial (Confluence, portal web y sistema de ficheros). |

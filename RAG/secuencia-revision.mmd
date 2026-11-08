@@ -1,0 +1,19 @@
+%% ===== Flujo R · Revisión de una tarea (duda del juez o confirmación de purga) =====
+sequenceDiagram
+    participant ING as ■ Ingesta, Step Functions<br/>(otro diagrama)
+    participant A2I as Revisión humana<br/>(Augmented AI)
+    participant REV as Responsable de<br/>documentación (revisor)
+    participant COG as Front de revisión<br/>(Cognito)
+    participant LRS as Lambda<br/>Resolución de la revisión
+    participant REG as Registro de ingesta<br/>(DynamoDB)
+    ING->>A2I: R1. Crea la tarea (documento, similares, veredictos, motivo) y espera
+    A2I->>REV: R2. Aviso: tarea en la cola de revisión
+    REV->>COG: R3. Inicia sesión
+    COG->>A2I: R3. Abre la tarea
+    A2I-->>REV: R4. Muestra el documento, los similares y los veredictos
+    REV->>A2I: R5. Decide y explica el motivo
+    Note over REV,A2I: Duda del juez: indexar, descartar, mantener ambas versiones<br/>o sustituir la anterior. Purga: confirmar o rechazar
+    A2I->>LRS: R6. Evento «tarea completada»
+    LRS->>REG: R6. Registra quién, cuándo, qué y por qué
+    LRS->>ING: R7. Reanuda la ingesta con la decisión
+
