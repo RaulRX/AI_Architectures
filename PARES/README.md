@@ -67,3 +67,11 @@ El dossier sigue como índice los apartados que pide el enunciado: diagrama y de
 | Cadena fija para el explorador, agente solo para el prompt | La entrada del explorador ya es estructurada; el agente se reserva para el lenguaje natural. |
 | Límite de iteraciones y trazas de cada herramienta | Evitan bucles agénticos y permiten explicar de qué documento sale cada dato. |
 | Solo datos validados | Un dato histórico mal leído presentado como cierto es peor que un hueco. |
+
+## Mejoras futuras
+
+No forman parte del diseño actual y se pueden incorporar sin rehacer la arquitectura. El detalle está en el apartado «Mejoras futuras» del dossier.
+
+- **Metadatos generados por IA antes de vectorizar:** versión en ortografía modernizada y resumen por página, indexados junto a la transcripción literal, para que una pregunta en castellano actual encuentre textos con grafías y abreviaturas del siglo XVI.
+- **Clasificación por tipología documental y filtros previos:** tipo de documento (carta, real cédula, relación, protocolo, mapa…) con un esquema de metadatos validable, y filtros exactos por tipo, archivo y fechas antes de la búsqueda vectorial.
+- **Orquestador con agentes especializados en el prompt libre:** agentes de grafo, documental y de escaneo, cada uno con solo sus herramientas, manteniendo el límite de iteraciones y la trazabilidad; la ingesta sigue siendo determinista.
